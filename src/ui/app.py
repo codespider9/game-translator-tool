@@ -16,6 +16,7 @@ from src.parsers.renpy_script import RenPyScriptParser
 from src.parsers.godot_pck import GodotTranslationParser
 from src.ai.gemini_provider import GeminiTranslator
 from src.ai.ollama_provider import OllamaTranslator
+from src.plugins.plugin_manager import PluginManager
 from src.ui.editor import TranslationEditorWindow
 
 ctk.set_appearance_mode("Dark")
@@ -28,13 +29,17 @@ class GameTranslatorApp(ctk.CTk):
         super().__init__()
 
         self.title("Universal Game Translator Tool")
-        self.geometry("920x720")
+        self.geometry("920x740")
 
         self.selected_folder = None
         self.detected_engine = None
         self.extracted_data = {}
         self.translated_data = {}
         self.target_locres_path = None
+
+        # Initialize Plugin Manager
+        self.plugin_manager = PluginManager()
+        self.active_plugins = self.plugin_manager.discover_and_load()
 
         # Title
         self.lbl_title = ctk.CTkLabel(
@@ -56,9 +61,12 @@ class GameTranslatorApp(ctk.CTk):
         )
         self.lbl_folder_path.pack(side="left", padx=10)
 
-        # Engine Info
+        # Engine & Plugin Info
+        plugin_count = len(self.active_plugins)
         self.lbl_engine_info = ctk.CTkLabel(
-            self, text="Engine Status: Waiting for directory selection...", font=ctk.CTkFont(size=14)
+            self,
+            text=f"Engine Status: Waiting for selection... | Active Plugins: {plugin_count}",
+            font=ctk.CTkFont(size=14),
         )
         self.lbl_engine_info.pack(pady=10)
 
@@ -122,7 +130,7 @@ class GameTranslatorApp(ctk.CTk):
         # Log Console
         self.txt_log = ctk.CTkTextbox(self, height=200)
         self.txt_log.pack(pady=10, padx=20, fill="both", expand=True)
-        self.log_message("System ready. Select a game directory to begin.")
+        self.log_message(f"System ready. Loaded {plugin_count} custom plugin(s).")
 
     def log_message(self, message: str):
         self.txt_log.insert("end", f"> {message}\n")
@@ -145,12 +153,13 @@ class GameTranslatorApp(ctk.CTk):
             res = detector.detect_engine()
             self.detected_engine = res.get("engine")
 
+            plugin_count = len(self.active_plugins)
             self.lbl_engine_info.configure(
-                text=f"Detected Engine: {self.detected_engine} | Status: {res.get('status')}",
+                text=f"Detected Engine: {self.detected_engine} | Active Plugins: {plugin_count}",
                 text_color="#4CAF50" if self.detected_engine != "Unknown" else "#FF9800",
             )
 
-            if self.detected_engine != "Unknown":
+            if self.detected_engine != "Unknown" or self.detected_engine in self.active_plugins:
                 self.btn_extract.configure(state="normal")
 
     def extract_texts(self):
@@ -158,6 +167,14 @@ class GameTranslatorApp(ctk.CTk):
             return
 
         self.log_message(f"Starting extraction for {self.detected_engine}...")
+
+        # Check for loaded custom plugin matching the detected engine
+        if self.detected_engine in self.active_plugins:
+            plugin = self.active_plugins[self.detected_engine]
+            self.extracted_data = plugin.extract_strings(self.selected_folder)
+            self.log_message(f"Extraction completed via {plugin.plugin_name} plugin.")
+            self._enable_post_extraction_buttons()
+            return
 
         if self.detected_engine == "Unreal Engine":
             locres_files = list(Path(self.selected_folder).rglob("*.locres"))
@@ -246,7 +263,7 @@ class GameTranslatorApp(ctk.CTk):
             imported = CSVTranslationHandler.import_csv_to_json(file_path)
             if imported:
                 self.translated_data = imported
-                self.log_message(f"Successfully imported translation data from CSV.")
+                self.log_message("Successfully imported translation data from CSV.")
                 messagebox.showinfo("Success", "CSV translations imported successfully.")
 
     def translate_texts(self):
@@ -291,6 +308,14 @@ class GameTranslatorApp(ctk.CTk):
     def repack_game_files(self):
         if not self.translated_data:
             messagebox.showerror("Error", "No translated data to repack.")
+            return
+
+        if self.detected_engine in self.active_plugins:
+            plugin = self.active_plugins[self.detected_engine]
+            output_path = str(Path(self.selected_folder) / f"{self.detected_engine.lower()}_repacked.bin")
+            if plugin.repack_strings(self.translated_data, output_path):
+                self.log_message(f"Repacked via plugin: {output_path}")
+                messagebox.showinfo("Success", f"Repacked successfully:\n{output_path}")
             return
 
         if self.detected_engine == "Unreal Engine" and self.target_locres_path:
