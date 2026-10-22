@@ -11,6 +11,7 @@ from src.core.detector import GameEngineDetector
 from src.core.text_formatter import ArabicTextFormatter
 from src.parsers.unreal_locres import UnrealLocresParser
 from src.parsers.unity_assets import UnityAssetsParser
+from src.parsers.renpy_script import RenPyScriptParser
 from src.ai.gemini_provider import GeminiTranslator
 from src.ai.ollama_provider import OllamaTranslator
 from src.ui.editor import TranslationEditorWindow
@@ -176,6 +177,21 @@ class GameTranslatorApp(ctk.CTk):
             self.log_message(f"Unity text extraction complete! Saved to: {output_file.name}")
             self._enable_post_extraction_buttons()
 
+        elif self.detected_engine == "Ren'Py":
+            parser = RenPyScriptParser(self.selected_folder)
+            self.extracted_data = parser.extract_strings()
+
+            if not self.extracted_data:
+                self.log_message("No .rpy script files or dialogue lines found.")
+                messagebox.showwarning("Warning", "No .rpy script files found.")
+                return
+
+            output_file = Path(self.selected_folder) / "extracted_strings.json"
+            parser.export_to_json(str(output_file))
+
+            self.log_message(f"Ren'Py script extraction complete! Saved to: {output_file.name}")
+            self._enable_post_extraction_buttons()
+
     def _enable_post_extraction_buttons(self):
         self.btn_translate.configure(state="normal")
         self.btn_edit.configure(state="normal")
@@ -236,12 +252,12 @@ class GameTranslatorApp(ctk.CTk):
             else:
                 messagebox.showerror("Error", "Failed to repack file.")
 
-        elif self.detected_engine == "Unity":
-            output_file = Path(self.selected_folder) / "unity_translated_output.json"
+        elif self.detected_engine in ["Unity", "Ren'Py"]:
+            output_file = Path(self.selected_folder) / f"{self.detected_engine.lower()}_translated_output.json"
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(self.translated_data, f, ensure_ascii=False, indent=4)
 
-            self.log_message(f"Unity asset pack saved to: {output_file.name}")
+            self.log_message(f"{self.detected_engine} asset pack saved to: {output_file.name}")
             messagebox.showinfo("Success", f"Saved to:\n{output_file.name}")
 
 
