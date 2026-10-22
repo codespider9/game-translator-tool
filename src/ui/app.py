@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox
 from src.core.detector import GameEngineDetector
 from src.core.text_formatter import ArabicTextFormatter
 from src.parsers.unreal_locres import UnrealLocresParser
+from src.parsers.unity_assets import UnityAssetsParser
 from src.ai.gemini_provider import GeminiTranslator
 from src.ui.editor import TranslationEditorWindow
 
@@ -93,7 +94,7 @@ class GameTranslatorApp(ctk.CTk):
         )
         self.btn_repack.pack(side="left", padx=5, pady=10, expand=True)
 
-        # Log & Output Console
+        # Log Console
         self.txt_log = ctk.CTkTextbox(self, height=220)
         self.txt_log.pack(pady=10, padx=20, fill="both", expand=True)
         self.log_message("System ready. Please select a game directory.")
@@ -125,7 +126,7 @@ class GameTranslatorApp(ctk.CTk):
         if not self.selected_folder:
             return
 
-        self.log_message("Starting text extraction phase...")
+        self.log_message(f"Starting text extraction phase for {self.detected_engine}...")
 
         if self.detected_engine == "Unreal Engine":
             locres_files = list(Path(self.selected_folder).rglob("*.locres"))
@@ -143,12 +144,31 @@ class GameTranslatorApp(ctk.CTk):
             output_file = Path(self.selected_folder) / "extracted_strings.json"
             parser.export_to_json(str(output_file))
 
-            self.log_message(f"Extraction complete! Saved to: {output_file.name}")
-            self.btn_translate.configure(state="normal")
-            self.btn_edit.configure(state="normal")
-            self.btn_repack.configure(state="normal")
+            self.log_message(f"Unreal extraction complete! Saved to: {output_file.name}")
+            self._enable_post_extraction_buttons()
+
+        elif self.detected_engine == "Unity":
+            parser = UnityAssetsParser(self.selected_folder)
+            self.extracted_data = parser.extract_strings()
+
+            if not self.extracted_data:
+                self.log_message("No text assets (JSON/CSV/TXT) found in Unity directory.")
+                messagebox.showwarning("Warning", "No readable text assets found.")
+                return
+
+            output_file = Path(self.selected_folder) / "extracted_strings.json"
+            parser.export_to_json(str(output_file))
+
+            self.log_message(f"Unity text extraction complete! Saved to: {output_file.name}")
+            self._enable_post_extraction_buttons()
+
         else:
             self.log_message(f"Parser for {self.detected_engine} is under construction.")
+
+    def _enable_post_extraction_buttons(self):
+        self.btn_translate.configure(state="normal")
+        self.btn_edit.configure(state="normal")
+        self.btn_repack.configure(state="normal")
 
     def translate_texts(self):
         api_key = self.entry_api.get().strip()
@@ -199,11 +219,19 @@ class GameTranslatorApp(ctk.CTk):
             success = parser.pack_to_locres(self.translated_data, str(output_path))
 
             if success:
-                self.log_message(f"Successfully repacked to: {output_path.name}")
+                self.log_message(f"Successfully repacked Unreal binary to: {output_path.name}")
                 messagebox.showinfo("Success", f"Repacked binary saved to:\n{output_path.name}")
             else:
                 self.log_message("Failed to repack binary .locres file.")
                 messagebox.showerror("Error", "Failed to repack file.")
+
+        elif self.detected_engine == "Unity":
+            output_file = Path(self.selected_folder) / "unity_translated_output.json"
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(self.translated_data, f, ensure_ascii=False, indent=4)
+
+            self.log_message(f"Unity translated asset pack saved to: {output_file.name}")
+            messagebox.showinfo("Success", f"Unity translation asset saved to:\n{output_file.name}")
 
 
 if __name__ == "__main__":
