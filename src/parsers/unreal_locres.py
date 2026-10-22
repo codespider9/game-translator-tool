@@ -5,7 +5,7 @@ from typing import Dict, Any
 
 
 class UnrealLocresParser:
-    """Parser for Unreal Engine binary .locres (Localization Resource) files (UE4/UE5)."""
+    """Parser & Repacker for Unreal Engine binary .locres (Localization Resource) files."""
 
     LOCRES_MAGIC = b"\x0e\x14\x74\x75\x67\x4a\x03\xfc\x4a\x15\x90\x9d\xc3\x37\x7f\x1b"
 
@@ -23,14 +23,23 @@ class UnrealLocresParser:
         if length == 0:
             return ""
         elif length > 0:
-            # UTF-8 encoded string
             string_bytes = f.read(length)
             return string_bytes[:-1].decode("utf-8", errors="ignore")
         else:
-            # UTF-16 encoded string (length is negative)
             length = -length
             string_bytes = f.read(length * 2)
             return string_bytes[:-2].decode("utf-16-le", errors="ignore")
+
+    def _write_fstring(self, f, string: str):
+        """Writes Unreal Engine FString structure (UTF-8)."""
+        if not string:
+            f.write(struct.pack("<i", 0))
+            return
+
+        encoded = string.encode("utf-8") + b"\x00"
+        length = len(encoded)
+        f.write(struct.pack("<i", length))
+        f.write(encoded)
 
     def extract_strings(self) -> Dict[str, Dict[str, str]]:
         """Parses binary .locres header, namespaces, keys, and string arrays."""
@@ -41,15 +50,10 @@ class UnrealLocresParser:
 
         try:
             with open(self.file_path, "rb") as f:
-                # Read 16-byte magic number
                 magic = f.read(16)
                 if magic != self.LOCRES_MAGIC:
                     print("Warning: Invalid or legacy .locres magic header.")
 
-                # Version byte
-                version = ord(f.read(1)) if magic == self.LOCRES_MAGIC else 0
-
-                # Read string table / entries count
                 entries_count_bytes = f.read(4)
                 if len(entries_count_bytes) < 4:
                     return {}
@@ -63,7 +67,7 @@ class UnrealLocresParser:
 
                     for _ in range(key_count):
                         key = self._read_fstring(f)
-                        f.read(4)  # Hash check
+                        f.read(4)  # Hash placeholder
                         source_string = self._read_fstring(f)
                         namespace_dict[key] = source_string
 
@@ -84,4 +88,24 @@ class UnrealLocresParser:
             return True
         except Exception as e:
             print(f"Failed to export JSON: {e}")
+            return False
+
+    def pack_to_locres(self, translated_data: Dict[str, Dict[str, str]], output_locres_path: str) -> bool:
+        """Repacks modified translations back to binary .locres file format."""
+        try:
+            with open(output_locres_path, "wb") as f:
+                f.write(self.LOCRES_MAGIC)
+                f.write(struct.pack("<I", len(translated_data)))
+
+                for namespace, keys_dict in translated_data.items():
+                    self._write_fstring(f, namespace)
+                    f.write(struct.pack("<I", len(keys_dict)))
+
+                    for key, translated_text in keys_dict.items():
+                        self._write_fstring(f, key)
+                        f.write(struct.pack("<I", 0))  # Dummy Hash
+                        self._write_fstring(f, translated_text)
+            return True
+        except Exception as e:
+            print(f"Error writing .locres file: {e}")
             return False
