@@ -9,6 +9,7 @@ import customtkinter as ctk
 from tkinter import filedialog, messagebox
 from src.core.detector import GameEngineDetector
 from src.core.text_formatter import ArabicTextFormatter
+from src.core.csv_handler import CSVTranslationHandler
 from src.parsers.unreal_locres import UnrealLocresParser
 from src.parsers.unity_assets import UnityAssetsParser
 from src.parsers.renpy_script import RenPyScriptParser
@@ -27,7 +28,7 @@ class GameTranslatorApp(ctk.CTk):
         super().__init__()
 
         self.title("Universal Game Translator Tool")
-        self.geometry("900x680")
+        self.geometry("920x720")
 
         self.selected_folder = None
         self.detected_engine = None
@@ -80,7 +81,7 @@ class GameTranslatorApp(ctk.CTk):
         )
         self.entry_api.pack(side="left", fill="x", expand=True, padx=10)
 
-        # Action Buttons Frame
+        # Main Action Buttons Frame
         self.frame_actions = ctk.CTkFrame(self)
         self.frame_actions.pack(pady=10, padx=20, fill="x")
 
@@ -104,8 +105,22 @@ class GameTranslatorApp(ctk.CTk):
         )
         self.btn_repack.pack(side="left", padx=5, pady=10, expand=True)
 
+        # CSV Tools Frame
+        self.frame_csv = ctk.CTkFrame(self)
+        self.frame_csv.pack(pady=5, padx=20, fill="x")
+
+        self.btn_export_csv = ctk.CTkButton(
+            self.frame_csv, text="Export to CSV (Excel)", command=self.export_csv, state="disabled"
+        )
+        self.btn_export_csv.pack(side="left", padx=10, pady=8, expand=True)
+
+        self.btn_import_csv = ctk.CTkButton(
+            self.frame_csv, text="Import from CSV", command=self.import_csv, state="disabled"
+        )
+        self.btn_import_csv.pack(side="left", padx=10, pady=8, expand=True)
+
         # Log Console
-        self.txt_log = ctk.CTkTextbox(self, height=220)
+        self.txt_log = ctk.CTkTextbox(self, height=200)
         self.txt_log.pack(pady=10, padx=20, fill="both", expand=True)
         self.log_message("System ready. Select a game directory to begin.")
 
@@ -212,6 +227,27 @@ class GameTranslatorApp(ctk.CTk):
         self.btn_translate.configure(state="normal")
         self.btn_edit.configure(state="normal")
         self.btn_repack.configure(state="normal")
+        self.btn_export_csv.configure(state="normal")
+        self.btn_import_csv.configure(state="normal")
+
+    def export_csv(self):
+        if not self.extracted_data:
+            messagebox.showerror("Error", "No extracted data available.")
+            return
+
+        csv_path = Path(self.selected_folder) / "strings_export.csv"
+        if CSVTranslationHandler.export_json_to_csv(self.extracted_data, str(csv_path)):
+            self.log_message(f"Exported strings to CSV: {csv_path.name}")
+            messagebox.showinfo("Success", f"CSV file created successfully:\n{csv_path.name}")
+
+    def import_csv(self):
+        file_path = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv")])
+        if file_path:
+            imported = CSVTranslationHandler.import_csv_to_json(file_path)
+            if imported:
+                self.translated_data = imported
+                self.log_message(f"Successfully imported translation data from CSV.")
+                messagebox.showinfo("Success", "CSV translations imported successfully.")
 
     def translate_texts(self):
         provider_choice = self.combo_provider.get()
