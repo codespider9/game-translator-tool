@@ -23,12 +23,13 @@ class GameTranslatorApp(ctk.CTk):
         super().__init__()
 
         self.title("Universal Game Translator Tool")
-        self.geometry("850x620")
+        self.geometry("900x650")
 
         self.selected_folder = None
         self.detected_engine = None
         self.extracted_data = {}
         self.translated_data = {}
+        self.target_locres_path = None
 
         # Title
         self.lbl_title = ctk.CTkLabel(
@@ -56,7 +57,7 @@ class GameTranslatorApp(ctk.CTk):
         )
         self.lbl_engine_info.pack(pady=10)
 
-        # Gemini API Key Input Frame
+        # Gemini API Key Frame
         self.frame_api = ctk.CTkFrame(self)
         self.frame_api.pack(pady=10, padx=20, fill="x")
 
@@ -75,20 +76,25 @@ class GameTranslatorApp(ctk.CTk):
         self.btn_extract = ctk.CTkButton(
             self.frame_actions, text="1. Extract Texts", command=self.extract_texts, state="disabled"
         )
-        self.btn_extract.pack(side="left", padx=10, pady=10, expand=True)
+        self.btn_extract.pack(side="left", padx=5, pady=10, expand=True)
 
         self.btn_translate = ctk.CTkButton(
             self.frame_actions, text="2. Translate (AI)", command=self.translate_texts, state="disabled"
         )
-        self.btn_translate.pack(side="left", padx=10, pady=10, expand=True)
+        self.btn_translate.pack(side="left", padx=5, pady=10, expand=True)
 
         self.btn_edit = ctk.CTkButton(
             self.frame_actions, text="3. Manual Review", command=self.open_editor, state="disabled"
         )
-        self.btn_edit.pack(side="left", padx=10, pady=10, expand=True)
+        self.btn_edit.pack(side="left", padx=5, pady=10, expand=True)
+
+        self.btn_repack = ctk.CTkButton(
+            self.frame_actions, text="4. Repack & Save", command=self.repack_game_files, state="disabled"
+        )
+        self.btn_repack.pack(side="left", padx=5, pady=10, expand=True)
 
         # Log & Output Console
-        self.txt_log = ctk.CTkTextbox(self, height=200)
+        self.txt_log = ctk.CTkTextbox(self, height=220)
         self.txt_log.pack(pady=10, padx=20, fill="both", expand=True)
         self.log_message("System ready. Please select a game directory.")
 
@@ -128,16 +134,19 @@ class GameTranslatorApp(ctk.CTk):
                 messagebox.showwarning("Warning", "No .locres files found in directory.")
                 return
 
-            self.log_message(f"Found {len(locres_files)} .locres file(s). Extracting strings...")
-            parser = UnrealLocresParser(str(locres_files[0]))
+            self.target_locres_path = str(locres_files[0])
+            self.log_message(f"Found .locres target: {locres_files[0].name}. Extracting strings...")
+
+            parser = UnrealLocresParser(self.target_locres_path)
             self.extracted_data = parser.extract_strings()
 
             output_file = Path(self.selected_folder) / "extracted_strings.json"
             parser.export_to_json(str(output_file))
 
-            self.log_message(f"Extraction complete! Extracted file saved to: {output_file.name}")
+            self.log_message(f"Extraction complete! Saved to: {output_file.name}")
             self.btn_translate.configure(state="normal")
             self.btn_edit.configure(state="normal")
+            self.btn_repack.configure(state="normal")
         else:
             self.log_message(f"Parser for {self.detected_engine} is under construction.")
 
@@ -147,36 +156,54 @@ class GameTranslatorApp(ctk.CTk):
             messagebox.showerror("Error", "Please enter a valid Gemini API Key.")
             return
 
-        json_path = Path(self.selected_folder) / "extracted_strings.json"
-        if not json_path.exists():
-            messagebox.showerror("Error", "Extracted text file missing. Run extraction first.")
+        if not self.extracted_data:
+            messagebox.showerror("Error", "No extracted data available. Run extraction first.")
             return
 
-        self.log_message("Translating extracted text via Gemini API...")
+        self.log_message("Translating strings via Gemini API...")
         translator = GeminiTranslator(api_key=api_key)
 
-        # Standard sample extraction structure for testing
-        raw_sample = self.extracted_data.get("SampleNamespace", {})
-        translated_raw = translator.translate_batch(raw_sample, target_language="Arabic")
+        translated_full = {}
+        for namespace, keys_dict in self.extracted_data.items():
+            raw_translated = translator.translate_batch(keys_dict, target_language="Arabic")
+            formatted_translated = ArabicTextFormatter.process_dictionary(raw_translated)
+            translated_full[namespace] = formatted_translated
 
-        # Apply Arabic Reshaping for proper display in-game
-        self.translated_data = ArabicTextFormatter.process_dictionary(translated_raw)
+        self.translated_data = translated_full
 
-        # Save translated result
         trans_file = Path(self.selected_folder) / "translated_strings.json"
         with open(trans_file, "w", encoding="utf-8") as f:
             json.dump(self.translated_data, f, ensure_ascii=False, indent=4)
 
-        self.log_message(f"Translation complete! Saved to: {trans_file.name}")
+        self.log_message(f"Translation completed and reshaped! Saved to: {trans_file.name}")
 
     def open_editor(self):
-        sample_orig = self.extracted_data.get("SampleNamespace", {})
+        sample_orig = self.extracted_data.get("Global", self.extracted_data.get(next(iter(self.extracted_data), ""), {}))
+        sample_trans = self.translated_data.get("Global", self.translated_data.get(next(iter(self.translated_data), ""), {}))
+
         if not sample_orig:
             messagebox.showwarning("Warning", "No extracted strings available for review.")
             return
 
-        editor_win = TranslationEditorWindow(self, sample_orig, self.translated_data)
+        editor_win = TranslationEditorWindow(self, sample_orig, sample_trans)
         editor_win.focus()
+
+    def repack_game_files(self):
+        if not self.translated_data:
+            messagebox.showerror("Error", "No translated data to repack.")
+            return
+
+        if self.detected_engine == "Unreal Engine" and self.target_locres_path:
+            output_path = Path(self.target_locres_path).with_suffix(".locres.new")
+            parser = UnrealLocresParser(self.target_locres_path)
+            success = parser.pack_to_locres(self.translated_data, str(output_path))
+
+            if success:
+                self.log_message(f"Successfully repacked to: {output_path.name}")
+                messagebox.showinfo("Success", f"Repacked binary saved to:\n{output_path.name}")
+            else:
+                self.log_message("Failed to repack binary .locres file.")
+                messagebox.showerror("Error", "Failed to repack file.")
 
 
 if __name__ == "__main__":
